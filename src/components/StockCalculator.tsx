@@ -1,4 +1,5 @@
 // components/StockCalculator.tsx 파일 생성 후 아래 내용 입력
+'use client';  // 이 줄을 파일 최상단에 추가
 import React, { useState } from 'react';
 
 const StockCalculator = () => {
