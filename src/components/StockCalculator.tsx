@@ -1,17 +1,38 @@
-// components/StockCalculator.tsx 파일 생성 후 아래 내용 입력
-'use client';  // 이 줄을 파일 최상단에 추가
+'use client';
+
 import React, { useState } from 'react';
+
+interface StockData {
+  currentPrice: number;
+  stdDev: number;
+  ma20: number;
+  minusOneSigma: number;
+  minusTwoSigma: number;
+  priceChange: number;
+  dayHigh: number;
+  dayLow: number;
+}
+
+interface ResultData {
+  ticker: string;
+  currentPrice: string;
+  buyPrice: string;
+  deviation: string;
+  priceChange: string;
+  dayRange: string;
+  ma20: string;
+}
 
 const StockCalculator = () => {
   const [ticker, setTicker] = useState('');
-  const [result, setResult] = useState(null);
+  const [result, setResult] = useState<ResultData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [previousTickers] = useState(['SOXL', 'TQQQ', 'UPRO']);
 
   const FINNHUB_API_KEY = process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
 
-  const fetchStockData = async (symbol) => {
+  const fetchStockData = async (symbol: string): Promise<StockData> => {
     try {
       // 현재가 조회
       const quoteResponse = await fetch(
@@ -40,15 +61,15 @@ const StockCalculator = () => {
       const closePrices = candleData.c;
       const currentPrice = quoteData.c;
       
-      const avgPrice = closePrices.reduce((a, b) => a + b, 0) / closePrices.length;
+      const avgPrice = closePrices.reduce((a: number, b: number) => a + b, 0) / closePrices.length;
       const stdDev = Math.sqrt(
-        closePrices.reduce((sq, n) => sq + Math.pow(n - avgPrice, 2), 0) / 
+        closePrices.reduce((sq: number, n: number) => sq + Math.pow(n - avgPrice, 2), 0) / 
         (closePrices.length - 1)
       );
 
       // 20일 이동평균 계산
       const recent20Prices = closePrices.slice(0, 20);
-      const ma20 = recent20Prices.reduce((a, b) => a + b, 0) / 20;
+      const ma20 = recent20Prices.reduce((a: number, b: number) => a + b, 0) / 20;
 
       return {
         currentPrice,
@@ -60,9 +81,12 @@ const StockCalculator = () => {
         dayHigh: quoteData.h,
         dayLow: quoteData.l
       };
-    } catch (err) {  // error를 err로 변경
-      console.error('Error:', err);
-      throw err;
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        console.error('Error:', err.message);
+        throw err;
+      }
+      throw new Error('알 수 없는 오류가 발생했습니다.');
     }
   };
 
@@ -87,8 +111,12 @@ const StockCalculator = () => {
         dayRange: `${data.dayLow.toFixed(2)} - ${data.dayHigh.toFixed(2)}`,
         ma20: data.ma20.toFixed(2)
       });
-    } catch (error) {
-      setError('데이터 조회 실패. 잠시 후 다시 시도해주세요.');
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('데이터 조회 실패. 잠시 후 다시 시도해주세요.');
+      }
     } finally {
       setLoading(false);
     }
