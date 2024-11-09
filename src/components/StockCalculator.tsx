@@ -1,3 +1,6 @@
+/* eslint-disable no-console */
+'use client';
+
 'use client';
 
 import React, { useState } from 'react';
@@ -11,6 +14,14 @@ interface StockData {
   priceChange: number;
   dayHigh: number;
   dayLow: number;
+  additionalInfo: {
+    volatility: string;
+    daysOfData: number;
+    periodHigh: string;
+    periodLow: string;
+    startDate: string;
+    endDate: string;
+  };
 }
 
 interface ResultData {
@@ -21,6 +32,14 @@ interface ResultData {
   priceChange: string;
   dayRange: string;
   ma20: string;
+  additionalInfo: {
+    volatility: string;
+    daysOfData: number;
+    periodHigh: string;
+    periodLow: string;
+    startDate: string;
+    endDate: string;
+  };
 }
 
 const StockCalculator = () => {
@@ -30,46 +49,66 @@ const StockCalculator = () => {
   const [error, setError] = useState<string | null>(null);
   const [previousTickers] = useState(['SOXL', 'TQQQ', 'UPRO']);
 
-  const FINNHUB_API_KEY = process.env.NEXT_PUBLIC_FINNHUB_API_KEY;
-
   const fetchStockData = async (symbol: string): Promise<StockData> => {
     try {
-      // 현재가 조회
-      const quoteResponse = await fetch(
-        `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_API_KEY}`
+      const ALPHA_VANTAGE_KEY = '31Q5GSX6MUTPKNSM';
+      const response = await fetch(
+        `https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol=${symbol}&outputsize=full&apikey=${ALPHA_VANTAGE_KEY}`
       );
-      const quoteData = await quoteResponse.json();
-
-      if (!quoteData || !quoteData.c) {
-        throw new Error('현재가 조회 실패');
-      }
-
-      // 2년치 일간 데이터 조회
-      const toDate = Math.floor(Date.now() / 1000);
-      const fromDate = toDate - (730 * 24 * 60 * 60);
-
-      const candleResponse = await fetch(
-        `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=D&from=${fromDate}&to=${toDate}&token=${FINNHUB_API_KEY}`
-      );
-      const candleData = await candleResponse.json();
-
-      if (candleData.s !== 'ok' || !candleData.c || candleData.c.length === 0) {
-        throw new Error('히스토리 데이터 조회 실패');
-      }
-
-      // 종가 데이터로 표준편차 계산
-      const closePrices = candleData.c;
-      const currentPrice = quoteData.c;
       
-      const avgPrice = closePrices.reduce((a: number, b: number) => a + b, 0) / closePrices.length;
+      const data = await response.json();
+      
+      if (data['Error Message']) {
+        throw new Error(data['Error Message']);
+      }
+
+      if (data['Note']) {
+        throw new Error(data['Note']);
+      }
+
+      const timeSeriesData = data['Time Series (Daily)'];
+      if (!timeSeriesData) {
+        throw new Error(`데이터 조회 실패: ${JSON.stringify(data)}`);
+      }
+
+      // 날짜별 데이터를 배열로 변환
+      const dates = Object.keys(timeSeriesData).sort().reverse();
+      
+      // 2년치 데이터 추출 (약 504 거래일)
+      const twoYearsAgo = new Date();
+      twoYearsAgo.setFullYear(twoYearsAgo.getFullYear() - 2);
+      
+      // 2년치 데이터만 필터링
+      const filteredDates = dates.filter(date => new Date(date) >= twoYearsAgo);
+      const closePrices = filteredDates.map(date => parseFloat(timeSeriesData[date]['4. close']));
+
+      // 현재가 (가장 최근 종가)
+      const currentPrice = closePrices[0];
+
+      // 2년 데이터 기반 표준편차 계산
+      const avgPrice = closePrices.reduce((a, b) => a + b, 0) / closePrices.length;
       const stdDev = Math.sqrt(
-        closePrices.reduce((sq: number, n: number) => sq + Math.pow(n - avgPrice, 2), 0) / 
+        closePrices.reduce((sq, n) => sq + Math.pow(n - avgPrice, 2), 0) / 
         (closePrices.length - 1)
       );
 
-      // 20일 이동평균 계산
+      // 20일 이동평균
       const recent20Prices = closePrices.slice(0, 20);
-      const ma20 = recent20Prices.reduce((a: number, b: number) => a + b, 0) / 20;
+      const ma20 = recent20Prices.reduce((a, b) => a + b, 0) / 20;
+
+      // 일간 변동률
+      const previousPrice = closePrices[1];
+      const priceChange = ((currentPrice - previousPrice) / previousPrice) * 100;
+
+      // 당일 고가/저가
+      const todayData = timeSeriesData[dates[0]];
+      const dayHigh = parseFloat(todayData['2. high']);
+      const dayLow = parseFloat(todayData['3. low']);
+
+      // 추가 통계 계산
+      const volatility = (stdDev / avgPrice) * 100; // 변동성(%)
+      const highest = Math.max(...closePrices);
+      const lowest = Math.min(...closePrices);
 
       return {
         currentPrice,
@@ -77,13 +116,21 @@ const StockCalculator = () => {
         ma20,
         minusOneSigma: currentPrice - stdDev,
         minusTwoSigma: currentPrice - (2 * stdDev),
-        priceChange: quoteData.dp,
-        dayHigh: quoteData.h,
-        dayLow: quoteData.l
+        priceChange,
+        dayHigh,
+        dayLow,
+        additionalInfo: {
+          volatility: volatility.toFixed(2) + '%',
+          daysOfData: filteredDates.length,
+          periodHigh: highest.toFixed(2),
+          periodLow: lowest.toFixed(2),
+          startDate: filteredDates[filteredDates.length-1],
+          endDate: filteredDates[0]
+        }
       };
+
     } catch (err: unknown) {
       if (err instanceof Error) {
-        console.error('Error:', err.message);
         throw err;
       }
       throw new Error('알 수 없는 오류가 발생했습니다.');
@@ -107,9 +154,10 @@ const StockCalculator = () => {
         currentPrice: data.currentPrice.toFixed(2),
         buyPrice: data.minusOneSigma.toFixed(2),
         deviation: "-1.00",
-        priceChange: data.priceChange?.toFixed(2) || '0.00',
+        priceChange: data.priceChange.toFixed(2),
         dayRange: `${data.dayLow.toFixed(2)} - ${data.dayHigh.toFixed(2)}`,
-        ma20: data.ma20.toFixed(2)
+        ma20: data.ma20.toFixed(2),
+        additionalInfo: data.additionalInfo
       });
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -134,7 +182,6 @@ const StockCalculator = () => {
               onClick={() => {
                 setTicker(t);
                 setError(null);
-                // 티커 선택 즉시 계산 시작
                 setTimeout(() => calculateBuyLevel(), 100);
               }}
               className="px-3 py-1 text-sm border rounded hover:bg-gray-100"
@@ -175,32 +222,70 @@ const StockCalculator = () => {
         )}
 
         {result && (
-          <div className="mt-6 p-4 bg-blue-50 rounded space-y-3">
-            <div className="grid grid-cols-2 gap-2 text-sm">
-              <div className="text-gray-600">티커:</div>
-              <div className="font-medium">{result.ticker}</div>
-              
-              <div className="text-gray-600">현재가:</div>
-              <div className="font-medium">
-                ${result.currentPrice}
-                <span className={`ml-2 text-xs ${
-                  parseFloat(result.priceChange) >= 0 ? 'text-green-600' : 'text-red-600'
-                }`}>
-                  ({result.priceChange}%)
-                </span>
-              </div>
-              
-              <div className="text-gray-600">당일 범위:</div>
-              <div className="font-medium text-gray-600">${result.dayRange}</div>
+          <div className="mt-6 space-y-4">
+            {/* 기본 정보 카드 */}
+            <div className="p-4 bg-blue-50 rounded space-y-3">
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="text-gray-600">티커:</div>
+                <div className="font-medium">{result.ticker}</div>
+                
+                <div className="text-gray-600">현재가:</div>
+                <div className="font-medium">
+                  ${result.currentPrice}
+                  <span className={`ml-2 text-xs ${
+                    parseFloat(result.priceChange) >= 0 ? 'text-green-600' : 'text-red-600'
+                  }`}>
+                    ({result.priceChange}%)
+                  </span>
+                </div>
+                
+                <div className="text-gray-600">당일 범위:</div>
+                <div className="font-medium text-gray-600">${result.dayRange}</div>
 
-              <div className="text-gray-600">20일 평균:</div>
-              <div className="font-medium">${result.ma20}</div>
-              
-              <div className="text-gray-600">1차 매수가:</div>
-              <div className="font-medium text-blue-600">${result.buyPrice}</div>
-              
-              <div className="text-gray-600">표준편차:</div>
-              <div className="font-medium">{result.deviation}σ</div>
+                <div className="text-gray-600">20일 평균:</div>
+                <div className="font-medium">${result.ma20}</div>
+                
+                <div className="text-gray-600">1차 매수가:</div>
+                <div className="font-medium text-blue-600">${result.buyPrice}</div>
+                
+                <div className="text-gray-600">표준편차:</div>
+                <div className="font-medium">{result.deviation}σ</div>
+              </div>
+            </div>
+
+            {/* 추가 통계 정보 카드 */}
+            <div className="p-4 bg-gray-50 rounded">
+              <h3 className="font-semibold mb-3 text-sm">2년 데이터 분석</h3>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="text-gray-600">분석 기간:</div>
+                <div className="font-medium">
+                  {new Date(result.additionalInfo.startDate).toLocaleDateString()} ~ 
+                  {new Date(result.additionalInfo.endDate).toLocaleDateString()}
+                </div>
+
+                <div className="text-gray-600">데이터 수:</div>
+                <div className="font-medium">{result.additionalInfo.daysOfData}일</div>
+
+                <div className="text-gray-600">기간 최고가:</div>
+                <div className="font-medium">${result.additionalInfo.periodHigh}</div>
+
+                <div className="text-gray-600">기간 최저가:</div>
+                <div className="font-medium">${result.additionalInfo.periodLow}</div>
+
+                <div className="text-gray-600">변동성:</div>
+                <div className="font-medium">{result.additionalInfo.volatility}</div>
+              </div>
+            </div>
+
+            {/* 매수 전략 카드 */}
+            <div className="p-4 bg-green-50 rounded">
+              <h3 className="font-semibold mb-2 text-sm">매수 전략 가이드</h3>
+              <ul className="list-disc pl-5 text-sm space-y-1">
+                <li>현재가 기준 매수 시작</li>
+                <li>-1σ ~ -2σ 구간에서 분할 매수</li>
+                <li>변동성 {result.additionalInfo.volatility} 고려</li>
+                <li>2년 기준 매수 가능 범위: ${result.additionalInfo.periodLow} ~ ${result.additionalInfo.periodHigh}</li>
+              </ul>
             </div>
           </div>
         )}
