@@ -60,9 +60,9 @@ const StockCalculator = () => {
         dayHigh: quoteData.h,
         dayLow: quoteData.l
       };
-    } catch (error) {
-      console.error('Error:', error);
-      throw error;
+    } catch (err) {  // error를 err로 변경
+      console.error('Error:', err);
+      throw err;
     }
   };
 
